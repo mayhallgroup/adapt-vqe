@@ -111,6 +111,13 @@ def adapt_vqe(hamiltonian_op, pool, reference_ket,
             print("Overlap with exact wfn: %20.15f"%(np.sqrt(np.real((curr_state.toarray().T.conj().dot(exact_wfn)[0,0])*
                                                                      (exact_wfn.T.conj().dot(curr_state.toarray())[0,0])))))
             #print("Overlap with exact state: %12.8f"%(np.sqrt(np.real((exact_wfn.T.conj().dot(curr_state))[0,0]*(curr_state.T.conj().dot(exact_wfn))[0,0]))))
+        print("Current Wavefunction:")
+        curr_wfn = curr_state.toarray()
+        for i in range(0,len(curr_wfn)):
+                if(np.abs(curr_wfn[i]) > 1e-10):
+                        print("%3d\t%s\t%.5E"%(i,str(bin(i))[2:].zfill(pool.n_orb),np.real(curr_wfn[i])))
+
+
         for oi in range(pool.n_ops):
 
             gi = pool.compute_gradient_i(oi, curr_state, sig)
