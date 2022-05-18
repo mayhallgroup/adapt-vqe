@@ -28,6 +28,8 @@ def adapt_vqe(hamiltonian_op, pool, reference_ket,
         theta_thresh    = 1e-7,
         adapt_maxiter   = 200,
         exact_energy    = 0,
+        exact_wfn       = [],
+        s2_op = None,
         psi4_filename   = "psi4_%12.12f"%random.random(),
         init_params = [],
         init_ops = []
@@ -101,6 +103,18 @@ def adapt_vqe(hamiltonian_op, pool, reference_ket,
         print(" Variance:    %12.8f" %var.real)
         print(" Uncertainty: %12.8f" %uncertainty)
         print(" Energy (error): %.5e"%(energy_old - exact_energy))
+        if (s2_op != None):
+            print(" <S^2>: %12.8f"%np.real(curr_state.conj().T.dot(s2_op.dot(curr_state))[0,0]))
+        if (len(exact_wfn) > 0):
+            #print("Current state magnitude: %12.8f"%(np.real(curr_state.T.conj().dot(curr_state)[0,0])))
+            print("Overlap with exact wfn: %20.15f"%(np.sqrt(np.real((curr_state.toarray().T.conj().dot(exact_wfn)[0])*
+                                                                     (exact_wfn.T.conj().dot(curr_state.toarray())[0])))))
+        print("Current Wavefunction:")
+        curr_wfn = curr_state.toarray()
+        for i in range(0,len(curr_wfn)):
+                if(np.abs(curr_wfn[i]) > 1e-10):
+                        print("%3d\t%s\t%.5E"%(i,str(bin(i))[2:].zfill(2*pool.n_orb),np.real(curr_wfn[i])))
+
         for oi in range(pool.n_ops):
 
             gi = pool.compute_gradient_i(oi, curr_state, sig)
@@ -151,8 +165,8 @@ def adapt_vqe(hamiltonian_op, pool, reference_ket,
         ansatz_mat.insert(0,pool.spmat_ops[next_index])
 
         trial_model = tUCCSD(hamiltonian, ansatz_mat, reference_ket, parameters)
-        hess = trial_model.hessian(parameters)
-        print("Hessian condition number after adding new parameter: %.5E"%np.linalg.cond(hess))
+        #hess = trial_model.hessian(parameters)
+        #print("Hessian condition number after adding new parameter: %.5E"%np.linalg.cond(hess))
 
         print("Optimizer: BFGS")
         opt_result = scipy.optimize.minimize(trial_model.energy, parameters, jac=trial_model.gradient,
@@ -163,11 +177,11 @@ def adapt_vqe(hamiltonian_op, pool, reference_ket,
         energy_old = trial_model.curr_energy
         parameters = list(opt_result['x'])
         curr_state = trial_model.prepare_state(parameters)
-        hess = trial_model.hessian(parameters)
-        hessvals, hessvecs = np.linalg.eigh(hess)
-        print("Hessian condition number at convergence: %.5E"%np.linalg.cond(hess))
-        print("Hessian eigenvalue spectrum:")
-        print(hessvals)
+        #hess = trial_model.hessian(parameters)
+        #hessvals, hessvecs = np.linalg.eigh(hess)
+        #print("Hessian condition number at convergence: %.5E"%np.linalg.cond(hess))
+        #print("Hessian eigenvalue spectrum:")
+        #print(hessvals)
         print(" Finished: %20.15f" % trial_model.curr_energy)
         print(" -----------New ansatz----------- ")
         print(" %4s %20s %18s" %("#","Coeff","Term"))
@@ -640,7 +654,27 @@ def seqGO(hamiltonian_op, pool, reference_ket,
             print(" %4i %12.8f %s" %(si, parameters[si], opstring) )
     return trial_model.curr_energy, curr_state, parameters
 
+def Make_S2_unrestricted(n_orb, C=[], S=[], shift=0):
+    if len(S):
+        Ca = C[::2,::2]
+        Cb = C[1::2,1::2]
+        Sa = S[::2,::2]
+        Sab = Ca.conj().T.dot(Sa.dot(Cb))
+    else:
+        Sab = np.eye(n_orb)
 
+    Sp_op = openfermion.FermionOperator()
+    Sm_op = openfermion.FermionOperator()
+    Sz_op = openfermion.FermionOperator()
+
+    for i in range(0, n_orb):
+        Sz_op += openfermion.FermionOperator(((2*i+shift, 1), (2*i+shift, 0)), 0.5) + openfermion.FermionOperator(((2*i+1+shift, 1),(2*i+1+shift, 0)), -0.5)
+        for j in range(0, n_orb):
+            Sp_op += FermionOperator(((2*i+shift, 1), (2*j+1+shift, 0)), Sab[j,i])
+            Sm_op += FermionOperator(((2*i+1+shift, 1), (2*j+shift, 0)), Sab[i,j])
+
+    S2_op = Sp_op * Sm_op + Sz_op * Sz_op - Sz_op
+    return openfermion.transforms.get_sparse_operator(S2_op)
 
 def Make_S2(n_orb):
 # {{{
