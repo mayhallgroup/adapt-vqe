@@ -110,13 +110,13 @@ class SQ_Hamiltonian:
 
     def extract_local_hamiltonian(self,orb_subset):
         """ Extract local Hamiltonian acting only on subset of orbitals """
-        assert(len(orb_subset) <= self.n_orb)
+        assert(orb_subset <= self.n_orb)
         
         H = SQ_Hamiltonian()
-        H.C = self.C[:,2*orb_subset]
+        H.C = self.C[:,0:2*orb_subset]
         H.n_orb = H.C.shape[1] // 2
-        H.int_H = self.int_H[:,2*orb_subset][2*orb_subset]
-        H.int_V = self.int_V[:,:,:,2*orb_subset][:,:,2*orb_subset][:,2*orb_subset][2*orb_subset]
+        H.int_H = self.int_H[:,0:2*orb_subset][0:2*orb_subset]
+        H.int_V = self.int_V[:,:,:,0:2*orb_subset][:,:,0:2*orb_subset][:,0:2*orb_subset][0:2*orb_subset]
 
         # Note: this doesn't pass other terms - can't see why it'd need to
 
@@ -216,6 +216,7 @@ class SQ_Hamiltonian:
 
         return fermi_op
 
+
         comment = """
         #We have spatial orbital integrals, so we need to convert back to spin orbitals
         
@@ -296,6 +297,709 @@ class SQ_Hamiltonian:
         return fermi_op
         """
 
+    def export_FN(self, config_a, config_b, shift=0):
+        # Builds the F_{N} operator from a set of alpha and beta 
+        # occupations and exports it as a FermionOperator
+        # $f_{pq} = h_{pq} + \sum_{i \in occ} \langle pi || qi \rangle $
+        fermi_op = openfermion.FermionOperator()
+        for p in range(0, self.n_orb):
+            pa = 2*p
+            pb = 2*p+1
+            for q in range(0, self.n_orb): 
+                qa = 2*q
+                qb = 2*q+1
+                fermi_op += openfermion.FermionOperator(((pa+shift,1),(qa+shift,0)), self.int_H[pa,qa])
+                fermi_op += openfermion.FermionOperator(((pb+shift,1),(qb+shift,0)), self.int_H[pb,qb])
+                for i in config_a:
+                    fermi_op += openfermion.FermionOperator(((pa+shift,1),(qa+shift,0)), self.int_V[pa,qa,2*i,2*i] - self.int_V[pa,2*i,2*i,qa])
+                    fermi_op += openfermion.FermionOperator(((pb+shift,1),(qb+shift,0)), self.int_V[pb,qb,2*i,2*i])
+                for j in config_b:
+                    fermi_op += openfermion.FermionOperator(((pa+shift,1),(qa+shift,0)), self.int_V[pa,qa,2*j+1,2*j+1])
+                    fermi_op += openfermion.FermionOperator(((pb+shift,1),(qb+shift,0)), self.int_V[pb,qb,2*j+1,2*j+1] - self.int_V[pb,2*j+1,2*j+1,qb])
+        return fermi_op
+
+    
+    def export_VN(self, config_a, config_b, shift=0):
+        # Builds the V_{N} operator from a set of alpha and beta
+        # occupations and exports it as a FermionOperator
+        fermi_op = openfermion.FermionOperator()
+        for p in range(0, self.n_orb):
+            pa = 2*p
+            pb = 2*p+1
+            for q in range(0, self.n_orb):
+                qa = 2*q
+                qb = 2*q+1
+                for i in config_a:
+                    fermi_op -= openfermion.FermionOperator(((pa+shift,1),(qa+shift,0)), self.int_V[pa,qa,2*i,2*i] - self.int_V[pa,2*i,2*i,qa])
+                    fermi_op -= openfermion.FermionOperator(((pb+shift,1),(qb+shift,0)), self.int_V[pb,qb,2*i,2*i])
+                for j in config_b:
+                    fermi_op -= openfermion.FermionOperator(((pa+shift,1),(qa+shift,0)), self.int_V[pa,qa,2*j+1,2*j+1])
+                    fermi_op -= openfermion.FermionOperator(((pb+shift,1),(qb+shift,0)), self.int_V[pb,qb,2*j+1,2*j+1] - self.int_V[pb,2*j+1,2*j+1,qb])
+                for r in range(0, self.n_orb):
+                    ra = 2*r
+                    rb = 2*r+1
+                    for s in range(0, self.n_orb):
+                        sa = 2*s
+                        sb = 2*s+1
+                        fermi_op += 0.5 * openfermion.FermionOperator(((pa+shift,1),(qa+shift,1),(sa+shift,0),(ra+shift,0)),
+                            self.int_V[pa,ra,qa,sa])
+                        fermi_op += 0.5 * openfermion.FermionOperator(((pa+shift,1),(qb+shift,1),(sb+shift,0),(ra+shift,0)),
+                            self.int_V[pa,ra,qb,sb])
+                        fermi_op += 0.5 * openfermion.FermionOperator(((pb+shift,1),(qa+shift,1),(sa+shift,0),(rb+shift,0)),
+                            self.int_V[pb,rb,qa,sa])
+                        fermi_op += 0.5 * openfermion.FermionOperator(((pb+shift,1),(qb+shift,1),(sb+shift,0),(rb+shift,0)),
+                            self.int_V[pb,rb,qb,sb])
+        return fermi_op
+
+    def make_f(self, config_a, config_b):
+        n_orb = self.n_orb
+        f = cp.deepcopy(self.int_H)
+        for p in range(0,n_orb):
+            pa = 2*p
+            pb = 2*p+1
+            for q in range(0,n_orb):
+                qa = 2*q
+                qb = 2*q+1
+                for i in config_a:
+                    f[pa,qa] += self.int_V[pa,qa,2*i,2*i] - self.int_V[pa,2*i,2*i,qa]
+                    f[pb,qb] += self.int_V[pb,qb,2*i,2*i]
+                for j in config_b:
+                    f[pa,qa] += self.int_V[pa,qa,2*j+1,2*j+1]
+                    f[pb,qb] += self.int_V[pb,qb,2*j+1,2*j+1] - self.int_V[pb,2*j+1,2*j+1,qb]
+        return f
+
+    def make_u(self, config_a, config_b):
+        """
+        u_{pq} = \sum_{i} <pi||qi>
+        """
+        n_orb = self.n_orb
+        u = np.zeros((2*n_orb,2*n_orb))
+        for p in range(0,n_orb):
+            pa = 2*p
+            pb = 2*p+1
+            for q in range(0,n_orb):
+                qa = 2*q
+                qb = 2*q+1
+                for i in config_a:
+                    u[pa,qa] += self.int_V[pa,qa,2*i,2*i] - self.int_V[pa,2*i,2*i,qa]
+                    u[pb,qb] += self.int_V[pb,qb,2*i,2*i]
+                for j in config_b:
+                    u[pa,qa] += self.int_V[pa,qa,2*j+1,2*j+1]
+                    u[pb,qb] += self.int_V[pb,qb,2*j+1,2*j+1] - self.int_V[pb,2*j+1,2*j+1,qb]
+        return u
+
+    def make_v(self):
+        """
+        v^{pq}_{rs} = <pq||rs>
+        """
+        n_orb = self.n_orb
+        v = np.zeros((2*n_orb,2*n_orb,2*n_orb,2*n_orb))
+        for p in range(0,n_orb):
+            pa = 2*p
+            pb = 2*p+1
+            for q in range(0,n_orb):
+                qa = 2*q
+                qb = 2*q+1
+                for r in range(0,n_orb):
+                    ra = 2*r
+                    rb = 2*r+1
+                    for s in range(0,n_orb):
+                        sa = 2*s
+                        sb = 2*s+1
+                        v[pa,qa,ra,sa] = self.int_V[pa,ra,qa,sa] - self.int_V[pa,sa,qa,ra]
+                        v[pa,qb,ra,sb] = self.int_V[pa,ra,qb,sb]
+                        v[pa,qb,rb,sa] = -self.int_V[pa,sa,qb,rb]
+                        v[pb,qa,rb,sa] = self.int_V[pb,rb,qa,sa]
+                        v[pb,qa,ra,sb] = -self.int_V[pb,sb,qa,ra]
+                        v[pb,qb,rb,sb] = self.int_V[pb,rb,qb,sb] - self.int_V[pb,sb,qb,rb]
+        return v
+
+    def export_FN_ph(self, config_a, config_b):
+        """
+        Builds the F_{N} operator in the particle-hole basis
+        \hat{F}_{N} = \sum_{pq} f_{q}^{p} \{\hat{p}^{\dagger}\hat{q}\}
+        """
+        n_orb = self.n_orb 
+        n_a = len(config_a)
+        n_b = len(config_b)
+        fmat = self.make_f(config_a,config_b)
+        fermi_op = openfermion.FermionOperator()
+        # OO
+        for p in range(0,n_a):
+            pa = 2*p 
+            for q in range(0,n_a):
+                qa = 2*q 
+                fermi_op += openfermion.FermionOperator(((qa,1),(pa,0)), -fmat[pa,qa])
+        for p in range(0,n_b):
+            pb = 2*p+1
+            for q in range(0,n_b):
+                qb = 2*q+1
+                fermi_op += openfermion.FermionOperator(((qb,1),(pb,0)), -fmat[pb,qb])
+        # OV / VO
+        for p in range(0,n_a):
+            pa = 2*p
+            for q in range(n_a,n_orb):
+                qa = 2*q 
+                fermi_op += openfermion.FermionOperator(((pa,0),(qa,0)), fmat[pa,qa])
+                fermi_op += openfermion.FermionOperator(((qa,1),(pa,1)), fmat[qa,pa])
+        for p in range(0,n_b):
+            pb = 2*p+1
+            for q in range(n_b,n_orb):
+                qb = 2*q+1
+                fermi_op += openfermion.FermionOperator(((pb,0),(qb,0)), fmat[pb,qb])
+                fermi_op += openfermion.FermionOperator(((qb,1),(pb,1)), fmat[qb,pb])
+        # VV
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(n_a,n_orb):
+                qa = 2*q 
+                fermi_op += openfermion.FermionOperator(((pa,1),(qa,0)), fmat[pa,qa])
+        for p in range(n_b,n_orb):
+            pb = 2*p+1
+            for q in range(n_b,n_orb):
+                qb = 2*q+1 
+                fermi_op += openfermion.FermionOperator(((pb,1),(qb,0)), fmat[pb,qb])
+        return fermi_op
+
+    def export_FN_ph2(self, config_a, config_b):
+        """
+        Builds the F_{N} operator in the particle-hole basis
+        \hat{F}_{N} = \sum_{pq} f_{q}^{p} \{\hat{p}^{\dagger}\hat{q}\}
+        """
+        n_orb = self.n_orb 
+        n_a = len(config_a)
+        n_b = len(config_b)
+        fmat = self.make_f(config_a,config_b)
+        fermi_op = openfermion.FermionOperator()
+        # OO
+        for p in range(0,n_a):
+            pa = 2*p 
+            for q in range(0,n_a):
+                qa = 2*q 
+                fermi_op += openfermion.FermionOperator(((qa,0),(pa,1)), -fmat[pa,qa])
+        for p in range(0,n_b):
+            pb = 2*p+1
+            for q in range(0,n_b):
+                qb = 2*q+1
+                fermi_op += openfermion.FermionOperator(((qb,0),(pb,1)), -fmat[pb,qb])
+        # OV / VO
+        for p in range(0,n_a):
+            pa = 2*p
+            for q in range(n_a,n_orb):
+                qa = 2*q 
+                fermi_op += openfermion.FermionOperator(((pa,1),(qa,0)), fmat[pa,qa])
+                fermi_op += openfermion.FermionOperator(((qa,1),(pa,0)), fmat[qa,pa])
+        for p in range(0,n_b):
+            pb = 2*p+1
+            for q in range(n_b,n_orb):
+                qb = 2*q+1
+                fermi_op += openfermion.FermionOperator(((pb,1),(qb,0)), fmat[pb,qb])
+                fermi_op += openfermion.FermionOperator(((qb,1),(pb,0)), fmat[qb,pb])
+        # VV
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(n_a,n_orb):
+                qa = 2*q 
+                fermi_op += openfermion.FermionOperator(((pa,1),(qa,0)), fmat[pa,qa])
+        for p in range(n_b,n_orb):
+            pb = 2*p+1
+            for q in range(n_b,n_orb):
+                qb = 2*q+1 
+                fermi_op += openfermion.FermionOperator(((pb,1),(qb,0)), fmat[pb,qb])
+        return fermi_op
+
+    def export_WN_ph(self, config_a, config_b):
+        """
+        Builds the W_{N} operator in the particle-hole basis
+        \hat{W}_{N} = \frac{1}{4} \sum_{pqrs} \langle pq || rs \rangle \{\hat{p}^{\dagger}\hat{q}^{\dagger}\hat{s}\hat{r}\}
+        """
+        n_orb = self.n_orb
+        n_a = len(config_a)
+        n_b = len(config_b)
+        vmat = self.make_v()
+        fermi_op = openfermion.FermionOperator()
+        #OOOO
+        for p in range(0,n_a):
+            pa = 2*p 
+            for q in range(0,n_a):
+                qa = 2*q 
+                for r in range(0,n_a):
+                    ra = 2*r 
+                    for s in range(0,n_a):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((sa,1),(ra,1),(pa,0),(qa,0)), 0.25*vmat[pa,qa,ra,sa])
+        for p in range(0,n_b):
+            pb = 2*p+1
+            for q in range(0,n_b):
+                qb = 2*q+1 
+                for r in range(0,n_b):
+                    rb = 2*r+1
+                    for s in range(0,n_b):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((sb,1),(rb,1),(pb,0),(qb,0)), 0.25*vmat[pb,qb,rb,sb])
+        for p in range(0,n_a):
+            pa = 2*p 
+            for q in range(0,n_b):
+                qb = 2*q+1
+                for r in range(0,n_a):
+                    ra = 2*r 
+                    for s in range(0,n_b):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((sb,1),(ra,1),(pa,0),(qb,0)), 0.25*vmat[pa,qb,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((sb,1),(ra,1),(qb,0),(pa,0)), 0.25*vmat[qb,pa,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(sb,1),(pa,0),(qb,0)), 0.25*vmat[pa,qb,sb,ra])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(sb,1),(qb,0),(pa,0)), 0.25*vmat[qb,pa,sb,ra])
+        #OO(OV) / (VO)OO
+        for p in range(0,n_a):
+            pa = 2*p 
+            for q in range(0,n_a):
+                qa = 2*q 
+                for r in range(n_a,n_orb):
+                    ra = 2*r 
+                    for s in range(0,n_a):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((sa,1),(pa,0),(qa,0),(ra,0)), 0.5*vmat[pa,qa,ra,sa])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(qa,1),(pa,1),(sa,0)), 0.5*vmat[ra,sa,pa,qa])
+        for p in range(0,n_b):
+            pb = 2*p+1 
+            for q in range(0,n_b):
+                qb = 2*q+1
+                for r in range(n_b,n_orb):
+                    rb = 2*r+1 
+                    for s in range(0,n_b):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((sb,1),(pb,0),(qb,0),(rb,0)), 0.5*vmat[pb,qb,rb,sb])
+                        fermi_op += openfermion.FermionOperator(((rb,1),(qb,1),(pb,1),(sb,0)), 0.5*vmat[rb,sb,pb,qb])
+        for p in range(0,n_a):
+            pa = 2*p 
+            for q in range(0,n_b):
+                qb = 2*q+1
+                for r in range(n_a,n_orb):
+                    ra = 2*r 
+                    for s in range(0,n_b):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((sb,1),(pa,0),(qb,0),(ra,0)), 0.5*vmat[pa,qb,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((sb,1),(qb,0),(pa,0),(ra,0)), 0.5*vmat[qb,pa,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(qb,1),(pa,1),(sb,0)), 0.5*vmat[ra,sb,pa,qb])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(pa,1),(qb,1),(sb,0)), 0.5*vmat[ra,sb,qb,pa])
+                for r in range(n_b,n_orb):
+                    rb = 2*r+1
+                    for s in range(0,n_a):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((sa,1),(pa,0),(qb,0),(rb,0)), 0.5*vmat[pa,qb,rb,sa])
+                        fermi_op += openfermion.FermionOperator(((sa,1),(qb,0),(pa,0),(rb,0)), 0.5*vmat[qb,pa,rb,sa])
+                        fermi_op += openfermion.FermionOperator(((rb,1),(qb,1),(pa,1),(sa,0)), 0.5*vmat[rb,sa,pa,qb])
+                        fermi_op += openfermion.FermionOperator(((rb,1),(pa,1),(qb,1),(sa,0)), 0.5*vmat[rb,sa,qb,pa])
+        #VVOO / OOVV
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(n_a,n_orb):
+                qa = 2*q 
+                for r in range(0,n_a):
+                    ra = 2*r 
+                    for s in range(0,n_a):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qa,1),(sa,1),(ra,1)), 0.25*vmat[pa,qa,ra,sa])
+                        fermi_op += openfermion.FermionOperator(((ra,0),(sa,0),(qa,0),(pa,0)), 0.25*vmat[ra,sa,pa,qa])
+        for p in range(n_b,n_orb):
+            pb = 2*p+1 
+            for q in range(n_b,n_orb):
+                qb = 2*q+1 
+                for r in range(0,n_b):
+                    rb = 2*r+1 
+                    for s in range(0,n_b):
+                        sb = 2*s+1 
+                        fermi_op += openfermion.FermionOperator(((pb,1),(qb,1),(sb,1),(rb,1)), 0.25*vmat[pb,qb,rb,sb])
+                        fermi_op += openfermion.FermionOperator(((rb,0),(sb,0),(qb,0),(pb,0)), 0.25*vmat[rb,sb,pb,qb])
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(n_b,n_orb):
+                qb = 2*q+1 
+                for r in range(0,n_a):
+                    ra = 2*r 
+                    for s in range(0,n_b):
+                        sb = 2*s+1 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qb,1),(sb,1),(ra,1)), 0.25*vmat[pa,qb,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((qb,1),(pa,1),(sb,1),(ra,1)), 0.25*vmat[qb,pa,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qb,1),(ra,1),(sb,1)), 0.25*vmat[pa,qb,sb,ra])
+                        fermi_op += openfermion.FermionOperator(((qb,1),(pa,1),(ra,1),(sb,1)), 0.25*vmat[qb,pa,sb,ra])
+                        fermi_op += openfermion.FermionOperator(((ra,0),(sb,0),(qb,0),(pa,0)), 0.25*vmat[ra,sb,pa,qb])
+                        fermi_op += openfermion.FermionOperator(((ra,0),(sb,0),(pa,0),(qb,0)), 0.25*vmat[ra,sb,qb,pa])
+                        fermi_op += openfermion.FermionOperator(((sb,0),(ra,0),(qb,0),(pa,0)), 0.25*vmat[sb,ra,pa,qb])
+                        fermi_op += openfermion.FermionOperator(((sb,0),(ra,0),(pa,0),(qb,0)), 0.25*vmat[sb,ra,qb,pa])
+        #VO(OV) / OV(VO)
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(0,n_a):
+                qa = 2*q 
+                for r in range(0,n_a):
+                    ra = 2*r 
+                    for s in range(n_a,n_orb):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(ra,1),(qa,0),(sa,0)), 0.5*vmat[pa,qa,ra,sa])
+                        fermi_op += openfermion.FermionOperator(((sa,1),(qa,1),(ra,0),(pa,0)), 0.5*vmat[ra,sa,pa,qa])
+        for p in range(n_b,n_orb):
+            pb = 2*p+1
+            for q in range(0,n_b):
+                qb = 2*q+1 
+                for r in range(0,n_b):
+                    rb = 2*r+1
+                    for s in range(n_b,n_orb):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((pb,1),(rb,1),(qb,0),(sb,0)), 0.5*vmat[pb,qb,rb,sb])
+                        fermi_op += openfermion.FermionOperator(((sb,1),(qb,1),(rb,0),(pb,0)), 0.5*vmat[rb,sb,pb,qb])
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(0,n_b):
+                qb = 2*q+1
+                for r in range(0,n_a):
+                    ra = 2*r 
+                    for s in range(n_b,n_orb):
+                        sb = 2*s+1 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(ra,1),(qb,0),(sb,0)), 0.5*vmat[pa,qb,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((sb,1),(qb,1),(ra,0),(pa,0)), 0.5*vmat[ra,sb,pa,qb])
+                for r in range(0,n_b):
+                    rb = 2*r+1
+                    for s in range(n_a,n_orb):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(rb,1),(qb,0),(sa,0)), 0.5*vmat[pa,qb,rb,sa])
+                        fermi_op += openfermion.FermionOperator(((sa,1),(qb,1),(rb,0),(pa,0)), 0.5*vmat[rb,sa,pa,qb])
+        for p in range(n_b,n_orb):
+            pb = 2*p+1
+            for q in range(0,n_a):
+                qa = 2*q 
+                for r in range(0,n_a):
+                    ra = 2*r 
+                    for s in range(n_b,n_orb):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((pb,1),(ra,1),(qa,0),(sb,0)), 0.5*vmat[pb,qa,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((sb,1),(qa,1),(ra,0),(pb,0)), 0.5*vmat[ra,sb,pb,qa])
+                for r in range(0,n_b):
+                    rb = 2*r+1 
+                    for s in range(n_a,n_orb):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((pb,1),(rb,1),(qa,0),(sa,0)), 0.5*vmat[pb,qa,rb,sa])
+                        fermi_op += openfermion.FermionOperator(((sa,1),(qa,1),(rb,0),(pb,0)), 0.5*vmat[rb,sa,pb,qa])
+        #VV(VO) \ (VO)VV
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(n_a,n_orb):
+                qa = 2*q 
+                for r in range(n_a,n_orb):
+                    ra = 2*r 
+                    for s in range(0,n_a):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qa,1),(sa,1),(ra,0)), 0.5*vmat[pa,qa,ra,sa])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(sa,0),(qa,0),(pa,0)), 0.5*vmat[ra,sa,pa,qa])
+        for p in range(n_b,n_orb):
+            pb = 2*p+1 
+            for q in range(n_b,n_orb):
+                qb = 2*q+1 
+                for r in range(n_b,n_orb):
+                    rb = 2*r+1
+                    for s in range(0,n_b):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((pb,1),(qb,1),(sb,1),(rb,0)), 0.5*vmat[pb,qb,rb,sb])
+                        fermi_op += openfermion.FermionOperator(((rb,1),(sb,0),(qb,0),(pb,0)), 0.5*vmat[rb,sb,pb,qb])
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(n_b,n_orb):
+                qb = 2*q+1
+                for r in range(n_a,n_orb):
+                    ra = 2*r 
+                    for s in range(0,n_b):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qb,1),(sb,1),(ra,0)), 0.5*vmat[pa,qb,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((qb,1),(pa,1),(sb,1),(ra,0)), 0.5*vmat[qb,pa,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(sb,0),(qb,0),(pa,0)), 0.5*vmat[ra,sb,pa,qb])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(sb,0),(pa,0),(qb,0)), 0.5*vmat[ra,sb,qb,pa])
+                for r in range(n_b,n_orb):
+                    rb = 2*r+1
+                    for s in range(0,n_a):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qb,1),(sa,1),(rb,0)), 0.5*vmat[pa,qb,rb,sa])
+                        fermi_op += openfermion.FermionOperator(((qb,1),(pa,1),(sa,1),(rb,0)), 0.5*vmat[qb,pa,rb,sa])
+                        fermi_op += openfermion.FermionOperator(((rb,1),(sa,0),(qb,0),(pa,0)), 0.5*vmat[rb,sa,pa,qb])
+                        fermi_op += openfermion.FermionOperator(((rb,1),(sa,0),(pa,0),(qb,0)), 0.5*vmat[rb,sa,qb,pa])
+        #VVVV
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(n_a,n_orb):
+                qa = 2*q 
+                for r in range(n_a,n_orb):
+                    ra = 2*r 
+                    for s in range(n_a,n_orb):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qa,1),(sa,0),(ra,0)), 0.25*vmat[pa,qa,ra,sa])
+        for p in range(n_b,n_orb):
+            pb = 2*p+1 
+            for q in range(n_b,n_orb):
+                qb = 2*q+1 
+                for r in range(n_b,n_orb):
+                    rb = 2*r+1 
+                    for s in range(n_b,n_orb):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((pb,1),(qb,1),(sb,0),(rb,0)), 0.25*vmat[pb,qb,rb,sb])
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(n_b,n_orb):
+                qb = 2*q+1
+                for r in range(n_a,n_orb):
+                    ra = 2*r 
+                    for s in range(n_b,n_orb):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qb,1),(sb,0),(ra,0)), 0.25*vmat[pa,qb,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((qb,1),(pa,1),(sb,0),(ra,0)), 0.25*vmat[qb,pa,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qb,1),(ra,0),(sb,0)), 0.25*vmat[pa,qb,sb,ra])
+                        fermi_op += openfermion.FermionOperator(((qb,1),(pa,1),(ra,0),(sb,0)), 0.25*vmat[qb,pa,sb,ra])
+        return fermi_op
+
+    def export_WN_ph2(self, config_a, config_b):
+        """
+        Builds the W_{N} operator in the particle-hole basis
+        \hat{W}_{N} = \frac{1}{4} \sum_{pqrs} \langle pq || rs \rangle \{\hat{p}^{\dagger}\hat{q}^{\dagger}\hat{s}\hat{r}\}
+        """
+        n_orb = self.n_orb
+        n_a = len(config_a)
+        n_b = len(config_b)
+        vmat = self.make_v()
+        fermi_op = openfermion.FermionOperator()
+        #OOOO
+        for p in range(0,n_a):
+            pa = 2*p 
+            for q in range(0,n_a):
+                qa = 2*q 
+                for r in range(0,n_a):
+                    ra = 2*r 
+                    for s in range(0,n_a):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((sa,0),(ra,0),(pa,1),(qa,1)), 0.25*vmat[pa,qa,ra,sa])
+        for p in range(0,n_b):
+            pb = 2*p+1
+            for q in range(0,n_b):
+                qb = 2*q+1 
+                for r in range(0,n_b):
+                    rb = 2*r+1
+                    for s in range(0,n_b):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((sb,0),(rb,0),(pb,1),(qb,1)), 0.25*vmat[pb,qb,rb,sb])
+        for p in range(0,n_a):
+            pa = 2*p 
+            for q in range(0,n_b):
+                qb = 2*q+1
+                for r in range(0,n_a):
+                    ra = 2*r 
+                    for s in range(0,n_b):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((sb,0),(ra,0),(pa,1),(qb,1)), 0.25*vmat[pa,qb,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((sb,0),(ra,0),(qb,1),(pa,1)), 0.25*vmat[qb,pa,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((ra,0),(sb,0),(pa,1),(qb,1)), 0.25*vmat[pa,qb,sb,ra])
+                        fermi_op += openfermion.FermionOperator(((ra,0),(sb,0),(qb,1),(pa,1)), 0.25*vmat[qb,pa,sb,ra])
+        #OO(OV) / (VO)OO
+        for p in range(0,n_a):
+            pa = 2*p 
+            for q in range(0,n_a):
+                qa = 2*q 
+                for r in range(n_a,n_orb):
+                    ra = 2*r 
+                    for s in range(0,n_a):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((sa,0),(pa,1),(qa,1),(ra,0)), 0.5*vmat[pa,qa,ra,sa])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(qa,0),(pa,0),(sa,1)), 0.5*vmat[ra,sa,pa,qa])
+        for p in range(0,n_b):
+            pb = 2*p+1 
+            for q in range(0,n_b):
+                qb = 2*q+1
+                for r in range(n_b,n_orb):
+                    rb = 2*r+1 
+                    for s in range(0,n_b):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((sb,0),(pb,1),(qb,1),(rb,0)), 0.5*vmat[pb,qb,rb,sb])
+                        fermi_op += openfermion.FermionOperator(((rb,1),(qb,0),(pb,0),(sb,1)), 0.5*vmat[rb,sb,pb,qb])
+        for p in range(0,n_a):
+            pa = 2*p 
+            for q in range(0,n_b):
+                qb = 2*q+1
+                for r in range(n_a,n_orb):
+                    ra = 2*r 
+                    for s in range(0,n_b):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((sb,0),(pa,1),(qb,1),(ra,0)), 0.5*vmat[pa,qb,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((sb,0),(qb,1),(pa,1),(ra,0)), 0.5*vmat[qb,pa,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(qb,0),(pa,0),(sb,1)), 0.5*vmat[ra,sb,pa,qb])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(pa,0),(qb,0),(sb,1)), 0.5*vmat[ra,sb,qb,pa])
+                for r in range(n_b,n_orb):
+                    rb = 2*r+1
+                    for s in range(0,n_a):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((sa,0),(pa,1),(qb,1),(rb,0)), 0.5*vmat[pa,qb,rb,sa])
+                        fermi_op += openfermion.FermionOperator(((sa,0),(qb,1),(pa,1),(rb,0)), 0.5*vmat[qb,pa,rb,sa])
+                        fermi_op += openfermion.FermionOperator(((rb,1),(qb,0),(pa,0),(sa,1)), 0.5*vmat[rb,sa,pa,qb])
+                        fermi_op += openfermion.FermionOperator(((rb,1),(pa,0),(qb,0),(sa,1)), 0.5*vmat[rb,sa,qb,pa])
+        #VVOO / OOVV
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(n_a,n_orb):
+                qa = 2*q 
+                for r in range(0,n_a):
+                    ra = 2*r 
+                    for s in range(0,n_a):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qa,1),(sa,0),(ra,0)), 0.25*vmat[pa,qa,ra,sa])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(sa,1),(qa,0),(pa,0)), 0.25*vmat[ra,sa,pa,qa])
+        for p in range(n_b,n_orb):
+            pb = 2*p+1 
+            for q in range(n_b,n_orb):
+                qb = 2*q+1 
+                for r in range(0,n_b):
+                    rb = 2*r+1 
+                    for s in range(0,n_b):
+                        sb = 2*s+1 
+                        fermi_op += openfermion.FermionOperator(((pb,1),(qb,1),(sb,0),(rb,0)), 0.25*vmat[pb,qb,rb,sb])
+                        fermi_op += openfermion.FermionOperator(((rb,1),(sb,1),(qb,0),(pb,0)), 0.25*vmat[rb,sb,pb,qb])
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(n_b,n_orb):
+                qb = 2*q+1 
+                for r in range(0,n_a):
+                    ra = 2*r 
+                    for s in range(0,n_b):
+                        sb = 2*s+1 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qb,1),(sb,0),(ra,0)), 0.25*vmat[pa,qb,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((qb,1),(pa,1),(sb,0),(ra,0)), 0.25*vmat[qb,pa,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qb,1),(ra,0),(sb,0)), 0.25*vmat[pa,qb,sb,ra])
+                        fermi_op += openfermion.FermionOperator(((qb,1),(pa,1),(ra,0),(sb,0)), 0.25*vmat[qb,pa,sb,ra])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(sb,1),(qb,0),(pa,0)), 0.25*vmat[ra,sb,pa,qb])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(sb,1),(pa,0),(qb,0)), 0.25*vmat[ra,sb,qb,pa])
+                        fermi_op += openfermion.FermionOperator(((sb,1),(ra,1),(qb,0),(pa,0)), 0.25*vmat[sb,ra,pa,qb])
+                        fermi_op += openfermion.FermionOperator(((sb,1),(ra,1),(pa,0),(qb,0)), 0.25*vmat[sb,ra,qb,pa])
+        #VO(OV) / OV(VO)
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(0,n_a):
+                qa = 2*q 
+                for r in range(0,n_a):
+                    ra = 2*r 
+                    for s in range(n_a,n_orb):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(ra,0),(qa,1),(sa,0)), 0.5*vmat[pa,qa,ra,sa])
+                        fermi_op += openfermion.FermionOperator(((sa,1),(qa,0),(ra,1),(pa,0)), 0.5*vmat[ra,sa,pa,qa])
+        for p in range(n_b,n_orb):
+            pb = 2*p+1
+            for q in range(0,n_b):
+                qb = 2*q+1 
+                for r in range(0,n_b):
+                    rb = 2*r+1
+                    for s in range(n_b,n_orb):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((pb,1),(rb,0),(qb,1),(sb,0)), 0.5*vmat[pb,qb,rb,sb])
+                        fermi_op += openfermion.FermionOperator(((sb,1),(qb,0),(rb,1),(pb,0)), 0.5*vmat[rb,sb,pb,qb])
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(0,n_b):
+                qb = 2*q+1
+                for r in range(0,n_a):
+                    ra = 2*r 
+                    for s in range(n_b,n_orb):
+                        sb = 2*s+1 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(ra,0),(qb,1),(sb,0)), 0.5*vmat[pa,qb,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((sb,1),(qb,0),(ra,1),(pa,0)), 0.5*vmat[ra,sb,pa,qb])
+                for r in range(0,n_b):
+                    rb = 2*r+1
+                    for s in range(n_a,n_orb):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(rb,0),(qb,1),(sa,0)), 0.5*vmat[pa,qb,rb,sa])
+                        fermi_op += openfermion.FermionOperator(((sa,1),(qb,0),(rb,1),(pa,0)), 0.5*vmat[rb,sa,pa,qb])
+        for p in range(n_b,n_orb):
+            pb = 2*p+1
+            for q in range(0,n_a):
+                qa = 2*q 
+                for r in range(0,n_a):
+                    ra = 2*r 
+                    for s in range(n_b,n_orb):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((pb,1),(ra,0),(qa,1),(sb,0)), 0.5*vmat[pb,qa,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((sb,1),(qa,0),(ra,1),(pb,0)), 0.5*vmat[ra,sb,pb,qa])
+                for r in range(0,n_b):
+                    rb = 2*r+1 
+                    for s in range(n_a,n_orb):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((pb,1),(rb,0),(qa,1),(sa,0)), 0.5*vmat[pb,qa,rb,sa])
+                        fermi_op += openfermion.FermionOperator(((sa,1),(qa,0),(rb,1),(pb,0)), 0.5*vmat[rb,sa,pb,qa])
+        #VV(VO) \ (VO)VV
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(n_a,n_orb):
+                qa = 2*q 
+                for r in range(n_a,n_orb):
+                    ra = 2*r 
+                    for s in range(0,n_a):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qa,1),(sa,0),(ra,0)), 0.5*vmat[pa,qa,ra,sa])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(sa,1),(qa,0),(pa,0)), 0.5*vmat[ra,sa,pa,qa])
+        for p in range(n_b,n_orb):
+            pb = 2*p+1 
+            for q in range(n_b,n_orb):
+                qb = 2*q+1 
+                for r in range(n_b,n_orb):
+                    rb = 2*r+1
+                    for s in range(0,n_b):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((pb,1),(qb,1),(sb,0),(rb,0)), 0.5*vmat[pb,qb,rb,sb])
+                        fermi_op += openfermion.FermionOperator(((rb,1),(sb,1),(qb,0),(pb,0)), 0.5*vmat[rb,sb,pb,qb])
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(n_b,n_orb):
+                qb = 2*q+1
+                for r in range(n_a,n_orb):
+                    ra = 2*r 
+                    for s in range(0,n_b):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qb,1),(sb,0),(ra,0)), 0.5*vmat[pa,qb,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((qb,1),(pa,1),(sb,0),(ra,0)), 0.5*vmat[qb,pa,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(sb,1),(qb,0),(pa,0)), 0.5*vmat[ra,sb,pa,qb])
+                        fermi_op += openfermion.FermionOperator(((ra,1),(sb,1),(pa,0),(qb,0)), 0.5*vmat[ra,sb,qb,pa])
+                for r in range(n_b,n_orb):
+                    rb = 2*r+1
+                    for s in range(0,n_a):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qb,1),(sa,0),(rb,0)), 0.5*vmat[pa,qb,rb,sa])
+                        fermi_op += openfermion.FermionOperator(((qb,1),(pa,1),(sa,0),(rb,0)), 0.5*vmat[qb,pa,rb,sa])
+                        fermi_op += openfermion.FermionOperator(((rb,1),(sa,1),(qb,0),(pa,0)), 0.5*vmat[rb,sa,pa,qb])
+                        fermi_op += openfermion.FermionOperator(((rb,1),(sa,1),(pa,0),(qb,0)), 0.5*vmat[rb,sa,qb,pa])
+        #VVVV
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(n_a,n_orb):
+                qa = 2*q 
+                for r in range(n_a,n_orb):
+                    ra = 2*r 
+                    for s in range(n_a,n_orb):
+                        sa = 2*s 
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qa,1),(sa,0),(ra,0)), 0.25*vmat[pa,qa,ra,sa])
+        for p in range(n_b,n_orb):
+            pb = 2*p+1 
+            for q in range(n_b,n_orb):
+                qb = 2*q+1 
+                for r in range(n_b,n_orb):
+                    rb = 2*r+1 
+                    for s in range(n_b,n_orb):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((pb,1),(qb,1),(sb,0),(rb,0)), 0.25*vmat[pb,qb,rb,sb])
+        for p in range(n_a,n_orb):
+            pa = 2*p 
+            for q in range(n_b,n_orb):
+                qb = 2*q+1
+                for r in range(n_a,n_orb):
+                    ra = 2*r 
+                    for s in range(n_b,n_orb):
+                        sb = 2*s+1
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qb,1),(sb,0),(ra,0)), 0.25*vmat[pa,qb,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((qb,1),(pa,1),(sb,0),(ra,0)), 0.25*vmat[qb,pa,ra,sb])
+                        fermi_op += openfermion.FermionOperator(((pa,1),(qb,1),(ra,0),(sb,0)), 0.25*vmat[pa,qb,sb,ra])
+                        fermi_op += openfermion.FermionOperator(((qb,1),(pa,1),(ra,0),(sb,0)), 0.25*vmat[qb,pa,sb,ra])
+        return fermi_op
+
 
 def init(molecule,charge,spin,basis,reference='rhf',n_frzn_occ=0, n_act=None, mo_order=None):
 # {{{
@@ -345,37 +1049,37 @@ def init(molecule,charge,spin,basis,reference='rhf',n_frzn_occ=0, n_act=None, mo
 
     hf_energy = mf.kernel()
     #internal stability check
-    print("Checking the internal stability of the SCF solution.")
-    new_mo = mf.stability()[0]
-    mo_diff = 0
-    j = 0
-    log = lib.logger.new_logger(mf)
-    if reference != "uhf":
-        mo_diff = np.linalg.norm(mf.mo_coeff - new_mo)
-        while (mo_diff > 1e-5) and (j < 3):
-            print("Rotating orbitals to find stable solution: attempt %d."%(j+1))
-            new_dm = mf.make_rdm1(new_mo,mf.mo_occ)
-            mf.run(new_dm)
-            new_mo = mf.stability()[0]
-            mo_diff = np.linalg.norm(mf.mo_coeff - new_mo)
-            j += 1
-        if mo_diff > 1e-5:
-            print("Unable to find a stable SCF solution after %d attempts."%(j+1))
-        else:
-            print("SCF solution is internally stable.")
-    else:
-        mo_diff = np.linalg.norm(mf.mo_coeff[0] - new_mo[0]) + np.linalg.norm(mf.mo_coeff[1] - new_mo[1])
-        while (mo_diff > 1e-5) and (j < 3):
-            print("Rotating orbitals to find stable solution: attempt %d."%(j+1))
-            new_dm = mf.make_rdm1(new_mo,mf.mo_occ)
-            mf.run(new_dm)
-            new_mo = mf.stability()[0]
-            mo_diff = np.linalg.norm(mf.mo_coeff[0] - new_mo[0]) + np.linalg.norm(mf.mo_coeff[1] - new_mo[1])
-            j += 1
-        if mo_diff > 1e-5:
-            print("Unable to find a stable SCF solution after %d attempts."%(j+1))
-        else:
-            print("SCF solution is internally stable.")
+    # print("Checking the internal stability of the SCF solution.")
+    # new_mo = mf.stability()[0]
+    # mo_diff = 0
+    # j = 0
+    # log = lib.logger.new_logger(mf)
+    # if reference != "uhf":
+    #     mo_diff = np.linalg.norm(mf.mo_coeff - new_mo)
+    #     while (mo_diff > 1e-5) and (j < 3):
+    #         print("Rotating orbitals to find stable solution: attempt %d."%(j+1))
+    #         new_dm = mf.make_rdm1(new_mo,mf.mo_occ)
+    #         mf.run(new_dm)
+    #         new_mo = mf.stability()[0]
+    #         mo_diff = np.linalg.norm(mf.mo_coeff - new_mo)
+    #         j += 1
+    #     if mo_diff > 1e-5:
+    #         print("Unable to find a stable SCF solution after %d attempts."%(j+1))
+    #     else:
+    #         print("SCF solution is internally stable.")
+    # else:
+    #     mo_diff = np.linalg.norm(mf.mo_coeff[0] - new_mo[0]) + np.linalg.norm(mf.mo_coeff[1] - new_mo[1])
+    #     while (mo_diff > 1e-5) and (j < 3):
+    #         print("Rotating orbitals to find stable solution: attempt %d."%(j+1))
+    #         new_dm = mf.make_rdm1(new_mo,mf.mo_occ)
+    #         mf.run(new_dm)
+    #         new_mo = mf.stability()[0]
+    #         mo_diff = np.linalg.norm(mf.mo_coeff[0] - new_mo[0]) + np.linalg.norm(mf.mo_coeff[1] - new_mo[1])
+    #         j += 1
+    #     if mo_diff > 1e-5:
+    #         print("Unable to find a stable SCF solution after %d attempts."%(j+1))
+    #     else:
+    #         print("SCF solution is internally stable.")
 
     hf_energy = mf.e_tot
 
