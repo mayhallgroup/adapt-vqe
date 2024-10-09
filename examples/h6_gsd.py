@@ -5,7 +5,8 @@ import pyscf_helper
 
 import pyscf
 from pyscf import lib
-from pyscf import gto, scf, mcscf, fci, ao2mo, lo, molden, cc
+from pyscf import gto, scf, mcscf, fci, ao2mo, lo, cc
+from pyscf.tools import molden
 from pyscf.cc import ccsd
 
 import openfermion 
@@ -54,7 +55,7 @@ def test():
         print(" State %4i: %12.8f au  <S2>: %12.8f" %(ei,e[ei]+E_nuc,S2))
     
     fermi_ham += FermionOperator((),E_nuc)
-    pyscf.molden.from_mo(mol, "full.molden", sq_ham.C)
+    pyscf.tools.molden.from_mo(mol, "full.molden", sq_ham.C)
 
     #   Francesco, change this to singlet_GSD() if you want generalized singles and doubles
     pool = operator_pools.singlet_GSD()

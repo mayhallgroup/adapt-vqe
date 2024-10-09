@@ -1,6 +1,6 @@
 
 import scipy
-import openfermion
+import openfermion as of
 import openfermionpsi4
 import os
 import numpy as np
@@ -10,8 +10,9 @@ import sys
 
 import pyscf
 from pyscf import lib
-from pyscf import gto, scf, mcscf, fci, ao2mo, lo, molden, cc
+from pyscf import gto, scf, mcscf, fci, ao2mo, lo, cc
 from pyscf.cc import ccsd
+from pyscf.tools import molden
 
 import operator_pools
 import vqe_methods
@@ -36,7 +37,7 @@ def adapt_vqe(hamiltonian_op, pool, reference_ket,
         ):
 # {{{
 
-    hamiltonian = openfermion.transforms.get_sparse_operator(hamiltonian_op)
+    hamiltonian = of.linalg.get_number_preserving_sparse_operator(hamiltonian_op,pool.n_spin_orb,pool.n_occ_a+pool.n_occ_b,spin_preserving=True)
     ref_energy = reference_ket.T.conj().dot(hamiltonian.dot(reference_ket))[0,0].real
     print(" Reference Energy: %12.8f" %ref_energy)
     energy_old = ref_energy
@@ -202,7 +203,7 @@ def ucc(geometry,
         ):
 # {{{
 
-    molecule = openfermion.hamiltonians.MolecularData(geometry, basis, multiplicity)
+    molecule = of.hamiltonians.MolecularData(geometry, basis, multiplicity)
     molecule.filename = psi4_filename
     molecule = openfermionpsi4.run_psi4(molecule,
                 run_scf = 1,
@@ -222,13 +223,13 @@ def ucc(geometry,
 
     #Build p-h reference and map it to JW transform
     reference_ket = scipy.sparse.csc_matrix(
-            openfermion.jw_configuration_state(
+            of.jw_configuration_state(
                 list(range(0,molecule.n_electrons)), molecule.n_qubits)).transpose()
     reference_bra = reference_ket.transpose().conj()
 
     #JW transform Hamiltonian computed classically with OFPsi4
     hamiltonian_op = molecule.get_molecular_hamiltonian()
-    hamiltonian = openfermion.transforms.get_sparse_operator(hamiltonian_op)
+    hamiltonian = of.linalg.get_number_preserving_sparse_operator(hamiltonian_op,molecule.n_qubits,molecule.n_electrons,spin_preserving=True)
 
     #Thetas
     parameters = [0]*pool.n_ops
@@ -263,7 +264,7 @@ def test_random(geometry,
     # {{{
     random.seed(seed)
 
-    molecule = openfermion.hamiltonians.MolecularData(geometry, basis, multiplicity)
+    molecule = of.hamiltonians.MolecularData(geometry, basis, multiplicity)
     molecule.filename = psi4_filename
     molecule = openfermionpsi4.run_psi4(molecule,
                 run_scf = 1,
@@ -283,13 +284,13 @@ def test_random(geometry,
 
     #Build p-h reference and map it to JW transform
     reference_ket = scipy.sparse.csc_matrix(
-            openfermion.jw_configuration_state(
+            of.jw_configuration_state(
                 list(range(0,molecule.n_electrons)), molecule.n_qubits)).transpose()
     reference_bra = reference_ket.transpose().conj()
 
     #JW transform Hamiltonian computed classically with OFPsi4
     hamiltonian_op = molecule.get_molecular_hamiltonian()
-    hamiltonian = openfermion.transforms.get_sparse_operator(hamiltonian_op)
+    hamiltonian = of.linalg.get_sparse_operator(hamiltonian_op,molecule.n_qubits,molecule.n_electrons,spin_preserving=True)
 
     #Thetas
     parameters = []
@@ -413,7 +414,7 @@ def test_lexical(geometry,
         ):
 # {{{
 
-    molecule = openfermion.hamiltonians.MolecularData(geometry, basis, multiplicity)
+    molecule = of.hamiltonians.MolecularData(geometry, basis, multiplicity)
     molecule.filename = psi4_filename
     molecule = openfermionpsi4.run_psi4(molecule,
                 run_scf = 1,
@@ -433,13 +434,13 @@ def test_lexical(geometry,
 
     #Build p-h reference and map it to JW transform
     reference_ket = scipy.sparse.csc_matrix(
-            openfermion.jw_configuration_state(
+            of.jw_configuration_state(
                 list(range(0,molecule.n_electrons)), molecule.n_qubits)).transpose()
     reference_bra = reference_ket.transpose().conj()
 
     #JW transform Hamiltonian computed classically with OFPsi4
     hamiltonian_op = molecule.get_molecular_hamiltonian()
-    hamiltonian = openfermion.transforms.get_sparse_operator(hamiltonian_op)
+    hamiltonian = of.linalg.get_sparse_operator(hamiltonian_op,molecule.n_qubits,molecule.n_electrons,spin_preserving=True)
 
     #Thetas
     parameters = []
@@ -554,7 +555,7 @@ def seqGO(hamiltonian_op, pool, reference_ket,
         theta_thresh    = 1e-7,
         psi4_filename   = "psi4_%12.12f"%random.random()
         ):
-    hamiltonian = openfermion.transforms.get_sparse_operator(hamiltonian_op)
+    hamiltonian = of.linalg.get_sparse_operator(hamiltonian_op,pool.n_spin_orb,pool.n_occ_a+pool.n_occ_b,spin_preserving=True)
     ref_energy = reference_ket.T.conj().dot(hamiltonian.dot(reference_ket))[0,0].real
     print(" Reference Energy: %12.8f" %ref_energy)
 
@@ -654,7 +655,7 @@ def seqGO(hamiltonian_op, pool, reference_ket,
             print(" %4i %12.8f %s" %(si, parameters[si], opstring) )
     return trial_model.curr_energy, curr_state, parameters
 
-def Make_S2_unrestricted(n_orb, C=[], S=[], shift=0):
+def Make_S2_unrestricted(n_orb, n_elec, C=[], S=[], shift=0):
     if len(S):
         Ca = C[::2,::2]
         Cb = C[1::2,1::2]
@@ -663,18 +664,18 @@ def Make_S2_unrestricted(n_orb, C=[], S=[], shift=0):
     else:
         Sab = np.eye(n_orb)
 
-    Sp_op = openfermion.FermionOperator()
-    Sm_op = openfermion.FermionOperator()
-    Sz_op = openfermion.FermionOperator()
+    Sp_op = of.FermionOperator()
+    Sm_op = of.FermionOperator()
+    Sz_op = of.FermionOperator()
 
     for i in range(0, n_orb):
-        Sz_op += openfermion.FermionOperator(((2*i+shift, 1), (2*i+shift, 0)), 0.5) + openfermion.FermionOperator(((2*i+1+shift, 1),(2*i+1+shift, 0)), -0.5)
+        Sz_op += of.FermionOperator(((2*i+shift, 1), (2*i+shift, 0)), 0.5) + of.FermionOperator(((2*i+1+shift, 1),(2*i+1+shift, 0)), -0.5)
         for j in range(0, n_orb):
             Sp_op += FermionOperator(((2*i+shift, 1), (2*j+1+shift, 0)), Sab[j,i])
             Sm_op += FermionOperator(((2*i+1+shift, 1), (2*j+shift, 0)), Sab[i,j])
 
     S2_op = Sp_op * Sm_op + Sz_op * Sz_op - Sz_op
-    return openfermion.transforms.get_sparse_operator(S2_op)
+    return of.linalg.get_number_preserving_sparse_operator(S2_op, 2*n_orb, n_elec, spin_preserving=True)
 
 def Make_S2(n_orb):
 # {{{

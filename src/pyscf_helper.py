@@ -1,7 +1,8 @@
 import numpy as np
 import scipy 
-from pyscf import gto, scf, mcscf, fci, ao2mo, lo, molden, cc
+from pyscf import gto, scf, mcscf, fci, ao2mo, lo, cc
 from pyscf.cc import ccsd
+from pyscf.tools import molden
 import copy as cp
 
 from sys import getsizeof
